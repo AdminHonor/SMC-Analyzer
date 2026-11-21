@@ -1,0 +1,2051 @@
+//@version=6
+
+indicator("SMC Analyzer v0.2.18", shorttitle="SMC Analyzer", overlay=true, max_boxes_count=300, max_lines_count=300, max_labels_count=300, dynamic_requests=true, max_bars_back=500)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 01. INPUTS
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+string G_DISPLAY = "01. Display"
+
+string G_STRUCTURE = "02. Market Structure"
+
+string G_OB = "03. Order Blocks"
+
+string G_QUALITY = "04. OB Quality Filters"
+
+string G_SWEEP = "05. Liquidity Sweeps"
+
+string G_IDM = "06. IDM — Multi Timeframe"
+
+string G_MTF_OB = "07. Higher Timeframe OBs"
+string G_DASH = "08. Dashboard"
+string G_ENGINE = "00. Engine"
+string G_DOBRUNIA = "09. DOBRUNIA Engine"
+
+engineMode = input.string("BOTH", "Engine mode", options=["CLASSIC", "DOBRUNIA", "BOTH"], group=G_ENGINE)
+bool classicEngineEnabled = engineMode != "DOBRUNIA"
+bool dobruniaEngineEnabled = engineMode != "CLASSIC"
+
+useDobruniaStructureOB = input.bool(true, "Structure OB", group=G_DOBRUNIA)
+useDobruniaMomentumOB = input.bool(true, "Momentum OB", group=G_DOBRUNIA)
+structureSweepWindow = input.int(30, "Liquidity sweep validity (bars)", minval=1, maxval=200, group=G_DOBRUNIA)
+momentumPivotLen = input.int(2, "Local Order Flow pivot length", minval=1, maxval=10, group=G_DOBRUNIA)
+momentumLookback = input.int(12, "Momentum OB search lookback", minval=2, maxval=50, group=G_DOBRUNIA)
+momentumMinBodyRatio = input.float(0.50, "Impulse minimum body / range", minval=0.1, maxval=0.95, step=0.05, group=G_DOBRUNIA)
+momentumMinATR = input.float(0.65, "Impulse auxiliary ATR threshold", minval=0.1, step=0.05, group=G_DOBRUNIA)
+momentumClosePosition = input.float(0.70, "Impulse close near extreme", minval=0.5, maxval=0.95, step=0.05, group=G_DOBRUNIA)
+momentumPullbackMin = input.float(0.18, "Correction minimum retracement", minval=0.05, maxval=0.8, step=0.05, group=G_DOBRUNIA)
+momentumPullbackMax = input.float(0.65, "Correction maximum retracement", minval=0.2, maxval=0.95, step=0.05, group=G_DOBRUNIA)
+showDobInsideBars = input.bool(true, "Highlight inside bars", group=G_DOBRUNIA)
+showDobInsideRange = input.bool(true, "Show inside-bar anchor range", group=G_DOBRUNIA)
+insideAnchorMinATR = input.float(0.20, "Anchor minimum range (ATR)", minval=0.05, maxval=3.00, step=0.05, group=G_DOBRUNIA)
+dobTrendContextBars = input.int(4, "Prior move confirmation bars", minval=2, maxval=10, group=G_DOBRUNIA)
+
+displayMode = input.string("CLEAN", "Display mode", options=["CLEAN", "FULL"], group=G_DISPLAY)
+
+showDashboard = input.bool(true, "Show dashboard", group=G_DISPLAY)
+
+adaptiveLabels = input.bool(true, "Compact labels on low TF", group=G_DISPLAY)
+
+useStructure = input.bool(true, "Show BOS / CHOCH", group=G_STRUCTURE)
+
+pivotLen = input.int(5, "Swing pivot length", minval=2, maxval=30, group=G_STRUCTURE)
+
+showSwingLabels = input.bool(false, "Show swing labels", group=G_STRUCTURE)
+
+useOB = input.bool(true, "Show Order Blocks", group=G_OB)
+
+useClassicOB = input.bool(true, "Classic OB", group=G_OB)
+
+useBOSOB = input.bool(true, "BOS OB", group=G_OB)
+
+useSweepOB = input.bool(true, "Sweep OB", group=G_OB)
+useCHOCHOB = input.bool(true, "Separate CHOCH OB", group=G_OB)
+chochMinGrade = input.int(2, "Minimum CHOCH OB quality (1=C, 2=B, 3=A)", minval=1, maxval=3, group=G_OB)
+
+obLookback = input.int(20, "OB search lookback", minval=2, maxval=100, group=G_OB)
+
+maxZones = input.int(3, "Maximum zones per direction", minval=1, maxval=20, group=G_OB)
+
+atrLength = input.int(14, "ATR length", minval=1, group=G_OB)
+
+displacementATR = input.float(1.5, "Displacement body (ATR)", minval=0.1, step=0.1, group=G_OB)
+
+removeMitigated = input.bool(true, "Remove fully mitigated OBs", group=G_OB)
+
+duplicateOverlap = input.float(0.75, "Duplicate overlap threshold", minval=0.1, maxval=1.0, step=0.05, group=G_OB)
+
+obOriginMode = input.string("IMPULSE", "OB Origin Mode", options=["IMPULSE", "SWING", "HYBRID"], group=G_OB)
+
+useLiquidityCascadeFilter = input.bool(true, "Filter BOS OB with unswept liquidity cascade", group=G_OB)
+
+cascadePivotsLowTF = input.int(2, "Minimum cascade pivots — 1m/5m/15m", minval=2, maxval=10, group=G_OB)
+
+cascadePivotsHTF = input.int(3, "Minimum cascade pivots — higher TF", minval=2, maxval=10, group=G_OB)
+
+obSelectionMode = input.string("BALANCED", "OB Selection Mode", options=["STRICT", "BALANCED", "SENSITIVE"], group=G_QUALITY)
+
+useFVGFilter = input.bool(false, "Require FVG confirmation", group=G_QUALITY)
+
+useBodyQualityFilter = input.bool(false, "Filter weak impulse body", group=G_QUALITY)
+
+minImpulseBodyRatio = input.float(0.45, "Minimum impulse body / range", minval=0.1, maxval=0.95, step=0.05, group=G_QUALITY)
+
+useHTFTrendFilter = input.bool(false, "Use higher TF direction filter", group=G_QUALITY)
+
+htfFilterTF = input.timeframe("240", "Higher TF for OB filter", group=G_QUALITY)
+
+showSweeps = input.bool(true, "Show sweep markers", group=G_SWEEP)
+
+useIDM = input.bool(true, "Show MTF IDM", group=G_IDM)
+
+show4H = input.bool(true, "4H IDM", group=G_IDM)
+
+show1H = input.bool(true, "1H IDM", group=G_IDM)
+
+show15M = input.bool(true, "15M IDM", group=G_IDM)
+
+show1M = input.bool(true, "1M IDM", group=G_IDM)
+
+idmPivotLen = input.int(3, "IDM pivot length", minval=2, maxval=15, group=G_IDM)
+
+showHigherTF_OB = input.bool(true, "Show higher timeframe OBs", group=G_MTF_OB)
+showMTF15_OB = input.bool(true, "15M OBs", group=G_MTF_OB)
+showMTF1H_OB = input.bool(true, "1H OBs", group=G_MTF_OB)
+showMTF4H_OB = input.bool(true, "4H OBs", group=G_MTF_OB)
+showMTF1D_OB = input.bool(true, "1D OBs", group=G_MTF_OB)
+showMTF1W_OB = input.bool(true, "1W OBs", group=G_MTF_OB)
+hideNestedMTFOBs = input.bool(true, "Hide nested lower-TF OBs", group=G_MTF_OB)
+
+bullClassicColor = input.color(color.new(color.teal, 82), "Bullish Classic OB", group=G_OB)
+
+bearClassicColor = input.color(color.new(color.red, 82), "Bearish Classic OB", group=G_OB)
+
+bullBOSColor = input.color(color.new(color.blue, 82), "Bullish BOS OB", group=G_OB)
+
+bearBOSColor = input.color(color.new(color.orange, 82), "Bearish BOS OB", group=G_OB)
+
+bullSweepColor = input.color(color.new(color.green, 82), "Bullish Sweep OB", group=G_OB)
+
+bearSweepColor = input.color(color.new(color.fuchsia, 82), "Bearish Sweep OB", group=G_OB)
+
+bullCHOCHColor = input.color(color.new(color.lime, 78), "Bullish CHOCH OB", group=G_OB)
+bearCHOCHColor = input.color(color.new(color.maroon, 78), "Bearish CHOCH OB", group=G_OB)
+
+color bullDobStructureColor = input.color(color.new(color.aqua, 76), "DOBRUNIA bullish Structure OB", group=G_DOBRUNIA)
+color bearDobStructureColor = input.color(color.new(color.purple, 76), "DOBRUNIA bearish Structure OB", group=G_DOBRUNIA)
+color bullDobMomentumColor = input.color(color.new(color.lime, 72), "DOBRUNIA bullish Momentum OB", group=G_DOBRUNIA)
+color bearDobMomentumColor = input.color(color.new(color.orange, 72), "DOBRUNIA bearish Momentum OB", group=G_DOBRUNIA)
+
+color bullLiquidityColor = color.new(color.aqua, 84)
+
+color bearLiquidityColor = color.new(color.purple, 84)
+
+color c4H = color.rgb(230, 180, 50)
+
+color c1H = color.rgb(40, 190, 220)
+
+color c15 = color.rgb(170, 100, 230)
+
+color c1M = color.rgb(220, 220, 220)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 02. COMMON VALUES
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+float atrValue = ta.atr(atrLength)
+
+float candleBody = math.abs(close - open)
+
+float candleRange = math.max(high - low, syminfo.mintick)
+
+float impulseBodyRatio = candleBody / candleRange
+
+// DOBRUNIA inside-bar groups: one fixed wick-to-wick anchor. The anchor
+// may be a doji; only its total range is filtered. A one-tick break ends
+// the group, and the breakout candle is never painted as an inside bar.
+var float dobInsideAnchorHigh = na
+var float dobInsideAnchorLow = na
+var int dobInsideAnchorBar = na
+var bool dobInsideRangeActive = false
+bool dobInsideBar = false
+float insideAnchorATR = nz(atrValue[1], atrValue)
+bool dobInsideAnchorCandidate = bar_index > 0 and not na(insideAnchorATR) and candleRange >= math.max(insideAnchorATR * insideAnchorMinATR, syminfo.mintick * 2.0)
+
+if barstate.isconfirmed
+    if dobInsideRangeActive
+        bool remainsInsideAnchor = high <= dobInsideAnchorHigh and low >= dobInsideAnchorLow
+        if remainsInsideAnchor
+            dobInsideBar := true
+        else
+            dobInsideRangeActive := false
+            dobInsideAnchorHigh := na
+            dobInsideAnchorLow := na
+            dobInsideAnchorBar := na
+    if not dobInsideRangeActive and dobInsideAnchorCandidate
+        dobInsideRangeActive := true
+        dobInsideAnchorHigh := high
+        dobInsideAnchorLow := low
+        dobInsideAnchorBar := bar_index
+
+// Force the native chart candle body to stay white (not only on cursor hover).
+// plotcandle keeps the requested bullish/bearish wick and border styling.
+barcolor(showDobInsideBars and dobInsideBar ? color.white : na, title="DOBRUNIA Inside-Bar Body")
+
+plotcandle(showDobInsideBars and dobInsideBar ? open : na,
+     showDobInsideBars and dobInsideBar ? high : na,
+     showDobInsideBars and dobInsideBar ? low : na,
+     showDobInsideBars and dobInsideBar ? close : na,
+     title="DOBRUNIA Inside Bars",
+     color=color.new(color.white, 0),
+     wickcolor=close >= open ? color.lime : color.red,
+     bordercolor=close >= open ? color.lime : color.red,
+     force_overlay=true)
+
+// Optional fixed anchor boundaries; the range does not move with inside bars.
+var line dobInsideHighLine = na
+var line dobInsideLowLine = na
+if barstate.isconfirmed and showDobInsideRange
+    if dobInsideRangeActive and not dobInsideBar and bar_index == dobInsideAnchorBar
+        if not na(dobInsideHighLine)
+            line.delete(dobInsideHighLine)
+        if not na(dobInsideLowLine)
+            line.delete(dobInsideLowLine)
+        dobInsideHighLine := line.new(bar_index, dobInsideAnchorHigh, bar_index + 1, dobInsideAnchorHigh, extend=extend.none, color=color.new(color.yellow, 15), style=line.style_dashed)
+        dobInsideLowLine := line.new(bar_index, dobInsideAnchorLow, bar_index + 1, dobInsideAnchorLow, extend=extend.none, color=color.new(color.yellow, 15), style=line.style_dashed)
+    else if dobInsideRangeActive
+        if not na(dobInsideHighLine)
+            line.set_x2(dobInsideHighLine, bar_index)
+        if not na(dobInsideLowLine)
+            line.set_x2(dobInsideLowLine, bar_index)
+
+
+bool bullishDisplacement = close > open and candleBody >= atrValue * displacementATR
+
+bool bearishDisplacement = close < open and candleBody >= atrValue * displacementATR
+
+bool compactTF = adaptiveLabels and timeframe.in_seconds() <= 300
+
+int chartSeconds = timeframe.in_seconds()
+
+int cascadeThreshold = na(chartSeconds) ? cascadePivotsHTF : chartSeconds <= 900 ? cascadePivotsLowTF : cascadePivotsHTF
+
+float htfClose = request.security(syminfo.tickerid, htfFilterTF, close[1], lookahead=barmerge.lookahead_on)
+
+float htfEMA = request.security(syminfo.tickerid, htfFilterTF, ta.ema(close, 50)[1], lookahead=barmerge.lookahead_on)
+
+bool htfBullAllowed = not useHTFTrendFilter or htfClose >= htfEMA
+
+bool htfBearAllowed = not useHTFTrendFilter or htfClose <= htfEMA
+
+bool bullBodyAllowed = not useBodyQualityFilter or impulseBodyRatio >= minImpulseBodyRatio
+
+bool bearBodyAllowed = not useBodyQualityFilter or impulseBodyRatio >= minImpulseBodyRatio
+
+float minOBMove = obSelectionMode == "STRICT" ? displacementATR * 0.85 : obSelectionMode == "BALANCED" ? displacementATR * 0.55 : displacementATR * 0.35
+
+bool needFVG = useFVGFilter or obSelectionMode == "STRICT"
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 03. MARKET STRUCTURE
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+float confirmedPivotHigh = ta.pivothigh(high, pivotLen, pivotLen)
+
+float confirmedPivotLow = ta.pivotlow(low, pivotLen, pivotLen)
+
+var float activeSwingHigh = na
+
+var float activeSwingLow = na
+
+var int activeSwingHighBar = na
+
+var int activeSwingLowBar = na
+
+var bool swingHighBroken = false
+
+var bool swingLowBroken = false
+
+var int marketBias = 0
+
+// Preserve swing origins before updating pivots.
+
+int preBreakSwingHighBar = activeSwingHighBar
+
+int preBreakSwingLowBar = activeSwingLowBar
+
+bool bullishBreak = barstate.isconfirmed and not na(activeSwingHigh) and not swingHighBroken and close > activeSwingHigh and close[1] <= activeSwingHigh
+
+bool bearishBreak = barstate.isconfirmed and not na(activeSwingLow) and not swingLowBroken and close < activeSwingLow and close[1] >= activeSwingLow
+
+bool bullishBOS = bullishBreak and marketBias >= 0
+
+bool bullishCHOCH = bullishBreak and marketBias < 0
+
+bool bearishBOS = bearishBreak and marketBias <= 0
+
+bool bearishCHOCH = bearishBreak and marketBias > 0
+
+if bullishBreak
+
+    swingHighBroken := true
+
+    marketBias := 1
+
+if bearishBreak
+
+    swingLowBroken := true
+
+    marketBias := -1
+
+if not na(confirmedPivotHigh)
+
+    activeSwingHigh := confirmedPivotHigh
+
+    activeSwingHighBar := bar_index - pivotLen
+
+    swingHighBroken := false
+
+    if showSwingLabels and displayMode == "FULL"
+
+        label.new(activeSwingHighBar, activeSwingHigh, "SH", style=label.style_label_down, color=color.new(color.red, 70), textcolor=color.white, size=size.tiny)
+
+if not na(confirmedPivotLow)
+
+    activeSwingLow := confirmedPivotLow
+
+    activeSwingLowBar := bar_index - pivotLen
+
+    swingLowBroken := false
+
+    if showSwingLabels and displayMode == "FULL"
+
+        label.new(activeSwingLowBar, activeSwingLow, "SL", style=label.style_label_up, color=color.new(color.green, 70), textcolor=color.white, size=size.tiny)
+
+if useStructure and bullishBOS
+
+    label.new(bar_index, high, compactTF ? "B" : "BOS", style=label.style_label_down, color=color.new(color.green, 0), textcolor=color.white, size=compactTF ? size.tiny : size.small)
+
+if useStructure and bullishCHOCH
+
+    label.new(bar_index, high, compactTF ? "C" : "CHOCH", style=label.style_label_down, color=color.new(color.teal, 0), textcolor=color.white, size=compactTF ? size.tiny : size.small)
+
+if useStructure and bearishBOS
+
+    label.new(bar_index, low, compactTF ? "B" : "BOS", style=label.style_label_up, color=color.new(color.red, 0), textcolor=color.white, size=compactTF ? size.tiny : size.small)
+
+if useStructure and bearishCHOCH
+
+    label.new(bar_index, low, compactTF ? "C" : "CHOCH", style=label.style_label_up, color=color.new(color.orange, 0), textcolor=color.white, size=compactTF ? size.tiny : size.small)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 04. OB STORAGE AND DRAWING
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var box[] bullishBoxes = array.new_box()
+
+var box[] bearishBoxes = array.new_box()
+
+var box[] bullishBOSBoxes = array.new_box()
+
+var box[] bearishBOSBoxes = array.new_box()
+
+var box[] bullishLiquidityBoxes = array.new_box()
+
+var box[] bearishLiquidityBoxes = array.new_box()
+
+// Separate DOBRUNIA storage: no shared duplicate or mitigation side effects.
+var box[] dobBullStructureBoxes = array.new_box()
+var box[] dobBearStructureBoxes = array.new_box()
+var box[] dobBullMomentumBoxes = array.new_box()
+var box[] dobBearMomentumBoxes = array.new_box()
+
+f_is_duplicate(box[] storage, float newTop, float newBottom) =>
+
+    bool duplicate = false
+
+    int count = array.size(storage)
+
+    if count > 0
+
+        for i = 0 to count - 1
+
+            box oldBox = array.get(storage, i)
+
+            float oldTop = box.get_top(oldBox)
+
+            float oldBottom = box.get_bottom(oldBox)
+
+            float overlap = math.max(0.0, math.min(newTop, oldTop) - math.max(newBottom, oldBottom))
+
+            float newHeight = math.max(newTop - newBottom, syminfo.mintick)
+
+            float oldHeight = math.max(oldTop - oldBottom, syminfo.mintick)
+
+            float overlapRatio = overlap / math.min(newHeight, oldHeight)
+
+            if overlapRatio >= duplicateOverlap
+
+                duplicate := true
+
+    duplicate
+
+// Remove a deleted box from the BOS tracking arrays as well.
+
+f_remove_bos_ref(box target) =>
+
+    int bullIndex = na
+
+    int bearIndex = na
+
+    if array.size(bullishBOSBoxes) > 0
+
+        for i = array.size(bullishBOSBoxes) - 1 to 0
+
+            if box.get_left(array.get(bullishBOSBoxes, i)) == box.get_left(target) and box.get_top(array.get(bullishBOSBoxes, i)) == box.get_top(target) and box.get_bottom(array.get(bullishBOSBoxes, i)) == box.get_bottom(target)
+
+                bullIndex := i
+
+                break
+
+    if array.size(bearishBOSBoxes) > 0
+
+        for i = array.size(bearishBOSBoxes) - 1 to 0
+
+            if box.get_left(array.get(bearishBOSBoxes, i)) == box.get_left(target) and box.get_top(array.get(bearishBOSBoxes, i)) == box.get_top(target) and box.get_bottom(array.get(bearishBOSBoxes, i)) == box.get_bottom(target)
+
+                bearIndex := i
+
+                break
+
+    if not na(bullIndex)
+
+        array.remove(bullishBOSBoxes, bullIndex)
+
+    if not na(bearIndex)
+
+        array.remove(bearishBOSBoxes, bearIndex)
+
+f_add_ob(box[] storage, int offset, color zoneColor, string tag, int grade, bool isBullish) =>
+
+    if offset > 0 and offset <= obLookback
+
+        float zoneTop = high[offset]
+
+        float zoneBottom = low[offset]
+
+        bool duplicate = f_is_duplicate(storage, zoneTop, zoneBottom)
+
+        if not duplicate
+
+            string gradeText = grade == 3 ? "A" : grade == 2 ? "B" : "C"
+
+            string boxText = tag == "CHOCH OB" ? (compactTF ? "C-OB " + gradeText : "CHOCH OB " + gradeText) : displayMode == "FULL" ? (compactTF ? gradeText : tag + " " + gradeText) : ""
+
+            box newBox = box.new(
+
+                 left=bar_index - offset,
+
+                 top=zoneTop,
+
+                 right=bar_index,
+
+                 bottom=zoneBottom,
+
+                 xloc=xloc.bar_index,
+
+                 extend=extend.right,
+
+                 bgcolor=zoneColor,
+
+                 border_color=color.new(zoneColor, 10),
+
+                 text=boxText,
+
+                 text_color=color.white,
+
+                 text_size=size.tiny)
+
+            array.push(storage, newBox)
+
+            if tag == "BOS OB"
+
+                if isBullish
+
+                    array.push(bullishBOSBoxes, newBox)
+
+                else
+
+                    array.push(bearishBOSBoxes, newBox)
+
+            while array.size(storage) > maxZones
+
+                box oldBox = array.shift(storage)
+
+                f_remove_bos_ref(oldBox)
+
+                box.delete(oldBox)
+
+f_add_liquidity_pool(int offset, bool isBullish) =>
+
+    if offset > 0 and offset <= obLookback
+
+        float zoneTop = high[offset]
+
+        float zoneBottom = low[offset]
+
+        box[] targetStorage = isBullish ? bullishLiquidityBoxes : bearishLiquidityBoxes
+
+        bool duplicate = f_is_duplicate(targetStorage, zoneTop, zoneBottom)
+
+        if not duplicate
+
+            string poolText = compactTF ? "LP / IDM" : "LIQUIDITY POOL / IDM"
+
+            color poolColor = isBullish ? bullLiquidityColor : bearLiquidityColor
+
+            box newPool = box.new(
+
+                 left=bar_index - offset,
+
+                 top=zoneTop,
+
+                 right=bar_index,
+
+                 bottom=zoneBottom,
+
+                 xloc=xloc.bar_index,
+
+                 extend=extend.right,
+
+                 bgcolor=poolColor,
+
+                 border_color=color.new(poolColor, 5),
+
+                 text=poolText,
+
+                 text_color=color.white,
+
+                 text_size=size.tiny)
+
+            array.push(targetStorage, newPool)
+
+            while array.size(targetStorage) > maxZones
+
+                box oldPool = array.shift(targetStorage)
+
+                box.delete(oldPool)
+
+// Create DOBRUNIA zones from an absolute origin bar and stored price bounds.
+f_add_dobrunia_zone(box[] storage, int originBar, float zoneTop, float zoneBottom, color zoneColor, string tag, int grade) =>
+    if not na(originBar) and not na(zoneTop) and not na(zoneBottom) and zoneTop > zoneBottom
+        if not f_is_duplicate(storage, zoneTop, zoneBottom)
+            string gradeText = grade >= 3 ? "A" : grade == 2 ? "B" : "C"
+            box newZone = box.new(left=originBar, top=zoneTop, right=bar_index, bottom=zoneBottom, xloc=xloc.bar_index, extend=extend.right, bgcolor=zoneColor, border_color=color.new(zoneColor, 5), text=displayMode == "FULL" ? tag + " " + gradeText : tag, text_color=color.white, text_size=size.tiny)
+            array.push(storage, newZone)
+            while array.size(storage) > maxZones
+                box oldZone = array.shift(storage)
+                box.delete(oldZone)
+
+// DOBRUNIA sequence, evaluated only on a confirmed bar:
+// Candle 1 (offset i) is the final candle of the prior move and must sweep
+// either extreme of the preceding candle. Candle 2 is the transfer candle.
+// Candle 3 (offset i-2) must be fully separated from candle 1 by price:
+// bullish: Low[3] > High[1]; bearish: High[3] < Low[1].
+// The first valid pair encountered while scanning from the newest sequence
+// backwards is selected. Candle color/body shape are deliberately ignored.
+// DOBRUNIA 3-candle transfer detector.
+// Candle 1 (offset i) must terminate the prior directional leg, sweep
+// liquidity from the immediately preceding candle, and not be an inside bar.
+// Candle 2 is the transfer candle. Candle 3 confirms reversal with strict
+// wick-to-wick separation. If 1/3 overlap or touch, roll forward to 2/4,
+// 3/5, etc. Candle color and body shape are deliberately ignored.
+f_dob_find_origin(bool bearishMove, int searchLimit, bool insideSeries) =>
+    int foundOffset = 0
+    int allowedLimit = math.min(searchLimit, obLookback)
+    int maxOffset = math.min(allowedLimit - 1, bar_index - dobTrendContextBars - 1)
+    if maxOffset >= 2
+        for i = 2 to maxOffset
+            bool priorLegConfirmed = bearishMove ? close[i + 1] > close[i + dobTrendContextBars + 1] : close[i + 1] < close[i + dobTrendContextBars + 1]
+            bool sweptPreviousHigh = high[i] > high[i + 1]
+            bool sweptPreviousLow = low[i] < low[i + 1]
+            bool sweptPrevious = sweptPreviousHigh or sweptPreviousLow
+            bool fullRangeSeparation = bearishMove ? high[i - 2] < low[i] : low[i - 2] > high[i]
+            bool originAllowed = not insideSeries[i]
+            if foundOffset == 0 and priorLegConfirmed and sweptPrevious and fullRangeSeparation and originAllowed
+                foundOffset := i
+    foundOffset
+
+f_find_dob_bull_candidate(int searchLimit) =>
+    f_dob_find_origin(false, searchLimit, dobInsideBar)
+
+f_find_dob_bear_candidate(int searchLimit) =>
+    f_dob_find_origin(true, searchLimit, dobInsideBar)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 05. OB CANDIDATE SELECTION
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// FVG must form shortly AFTER the candidate candle.
+
+// Offset 0 is the current candle; larger offsets are older candles.
+
+f_bull_local_fvg(int candidateOffset) =>
+
+    bool found = false
+
+    int maxJ = math.min(2, candidateOffset - 3)
+
+    if maxJ >= 0
+
+        for j = 0 to maxJ
+
+            bool bullishFVG = low[j] > high[j + 2]
+
+            if bullishFVG
+
+                found := true
+
+    found
+
+f_bear_local_fvg(int candidateOffset) =>
+
+    bool found = false
+
+    int maxJ = math.min(2, candidateOffset - 3)
+
+    if maxJ >= 0
+
+        for j = 0 to maxJ
+
+            bool bearishFVG = high[j] < low[j + 2]
+
+            if bearishFVG
+
+                found := true
+
+    found
+
+// Impulse candidates: nearest valid opposing candle takes priority.
+
+// Score grades the candidate but does not allow an older candle
+
+// to replace a nearer valid candle.
+
+f_select_bull_ob(int searchLimit) =>
+
+    int bestOffset = 0
+
+    int bestGrade = 0
+
+    int allowedLimit = math.min(searchLimit, obLookback)
+
+    if allowedLimit >= 1
+
+        for i = 1 to allowedLimit
+
+            bool candidate = close[i] < open[i] and not dobInsideBar[i]
+
+            float candidateATR = math.max(nz(atrValue[i], atrValue), syminfo.mintick)
+
+            float departureATR = (close - low[i]) / candidateATR
+
+            bool departureValid = close > high[i] and departureATR >= minOBMove
+
+            bool fvgFound = f_bull_local_fvg(i)
+
+            bool fvgValid = not needFVG or fvgFound
+
+            if bestOffset == 0 and candidate and departureValid and fvgValid
+
+                float candidateRange = math.max(high[i] - low[i], syminfo.mintick)
+
+                float candidateBodyRatio = math.abs(close[i] - open[i]) / candidateRange
+
+                float gradeScore = departureATR + candidateBodyRatio * 0.35 + (fvgFound ? 1.0 : 0.0)
+
+                bestOffset := i
+
+                bestGrade := gradeScore >= 3.2 ? 3 : gradeScore >= 1.8 ? 2 : 1
+
+    [bestOffset, bestGrade]
+
+f_select_bear_ob(int searchLimit) =>
+
+    int bestOffset = 0
+
+    int bestGrade = 0
+
+    int allowedLimit = math.min(searchLimit, obLookback)
+
+    if allowedLimit >= 1
+
+        for i = 1 to allowedLimit
+
+            bool candidate = close[i] > open[i] and not dobInsideBar[i]
+
+            float candidateATR = math.max(nz(atrValue[i], atrValue), syminfo.mintick)
+
+            float departureATR = (high[i] - close) / candidateATR
+
+            bool departureValid = close < low[i] and departureATR >= minOBMove
+
+            bool fvgFound = f_bear_local_fvg(i)
+
+            bool fvgValid = not needFVG or fvgFound
+
+            if bestOffset == 0 and candidate and departureValid and fvgValid
+
+                float candidateRange = math.max(high[i] - low[i], syminfo.mintick)
+
+                float candidateBodyRatio = math.abs(close[i] - open[i]) / candidateRange
+
+                float gradeScore = departureATR + candidateBodyRatio * 0.35 + (fvgFound ? 1.0 : 0.0)
+
+                bestOffset := i
+
+                bestGrade := gradeScore >= 3.2 ? 3 : gradeScore >= 1.8 ? 2 : 1
+
+    [bestOffset, bestGrade]
+
+// Swing-origin validation.
+
+// A swing candle may be bullish or bearish; its pivot position,
+
+// followed by a confirmed departure, is what matters.
+
+f_validate_bull_swing(int swingOffset, int searchLimit) =>
+
+    bool valid = false
+
+    int maxSwingOffset = math.min(searchLimit + 1, obLookback)
+
+    if swingOffset > 0 and swingOffset <= maxSwingOffset
+
+        float candidateATR = math.max(nz(atrValue[swingOffset], atrValue), syminfo.mintick)
+
+        float departureATR = (close - low[swingOffset]) / candidateATR
+
+        bool departedAbove = close > high[swingOffset]
+
+        bool enoughMove = departureATR >= minOBMove
+
+        bool fvgValid = not needFVG or f_bull_local_fvg(swingOffset)
+
+        valid := not dobInsideBar[swingOffset] and departedAbove and enoughMove and fvgValid
+
+    valid
+
+f_validate_bear_swing(int swingOffset, int searchLimit) =>
+
+    bool valid = false
+
+    int maxSwingOffset = math.min(searchLimit + 1, obLookback)
+
+    if swingOffset > 0 and swingOffset <= maxSwingOffset
+
+        float candidateATR = math.max(nz(atrValue[swingOffset], atrValue), syminfo.mintick)
+
+        float departureATR = (high[swingOffset] - close) / candidateATR
+
+        bool departedBelow = close < low[swingOffset]
+
+        bool enoughMove = departureATR >= minOBMove
+
+        bool fvgValid = not needFVG or f_bear_local_fvg(swingOffset)
+
+        valid := not dobInsideBar[swingOffset] and departedBelow and enoughMove and fvgValid
+
+    valid
+
+// Origin mode selection.
+
+// IMPULSE: nearest valid opposing candle.
+
+// SWING: only the validated swing candle.
+
+// HYBRID: swing candle first, then impulse fallback.
+
+f_select_bull_origin(int searchLimit, int swingOffset, bool swingAllowed) =>
+
+    int selectedOffset = 0
+
+    int selectedGrade = 0
+
+    bool swingValid = obOriginMode != "IMPULSE" and swingAllowed and f_validate_bull_swing(swingOffset, searchLimit)
+
+    if swingValid
+
+        selectedOffset := swingOffset
+
+        selectedGrade := 3
+
+    else if obOriginMode != "SWING"
+
+        [impulseOffset, impulseGrade] = f_select_bull_ob(searchLimit)
+
+        selectedOffset := impulseOffset
+
+        selectedGrade := impulseGrade
+
+    [selectedOffset, selectedGrade]
+
+f_select_bear_origin(int searchLimit, int swingOffset, bool swingAllowed) =>
+
+    int selectedOffset = 0
+
+    int selectedGrade = 0
+
+    bool swingValid = obOriginMode != "IMPULSE" and swingAllowed and f_validate_bear_swing(swingOffset, searchLimit)
+
+    if swingValid
+
+        selectedOffset := swingOffset
+
+        selectedGrade := 3
+
+    else if obOriginMode != "SWING"
+
+        [impulseOffset, impulseGrade] = f_select_bear_ob(searchLimit)
+
+        selectedOffset := impulseOffset
+
+        selectedGrade := impulseGrade
+
+    [selectedOffset, selectedGrade]
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 06. LIQUIDITY CASCADE VALIDATION FOR BOS OB
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// A bearish candidate is considered to have swept liquidity when its
+
+// high trades above a previously confirmed, still-unswept pivot high
+
+// and its close returns below that pivot.
+
+//
+
+// A bullish candidate uses the mirrored low-side condition.
+
+//
+
+// Only pivots confirmed BEFORE the candidate candle are considered.
+
+// A cascade is counted only when at least the configured number of
+
+// prior pivot levels remained unswept before the candidate candle.
+
+f_bear_liquidity_blocked(int candidateOffset, int minimumPivots) =>
+
+    int unsweptCount = 0
+
+    bool candidateSweptLiquidity = false
+
+    int maxJ = math.min(candidateOffset + obLookback, 300)
+
+    if candidateOffset > 0 and maxJ > candidateOffset
+
+        for j = candidateOffset + 1 to maxJ
+
+            float priorPivot = confirmedPivotHigh[j]
+
+            if not na(priorPivot)
+
+                bool alreadySweptBeforeCandidate = false
+
+                if j > candidateOffset + 1
+
+                    for k = candidateOffset + 1 to j - 1
+
+                        if high[k] > priorPivot
+
+                            alreadySweptBeforeCandidate := true
+
+                if not alreadySweptBeforeCandidate
+
+                    unsweptCount += 1
+
+                    bool sweptByCandidate = high[candidateOffset] > priorPivot and close[candidateOffset] < priorPivot
+
+                    if sweptByCandidate
+
+                        candidateSweptLiquidity := true
+
+    unsweptCount >= minimumPivots and not candidateSweptLiquidity
+
+f_bull_liquidity_blocked(int candidateOffset, int minimumPivots) =>
+
+    int unsweptCount = 0
+
+    bool candidateSweptLiquidity = false
+
+    int maxJ = math.min(candidateOffset + obLookback, 300)
+
+    if candidateOffset > 0 and maxJ > candidateOffset
+
+        for j = candidateOffset + 1 to maxJ
+
+            float priorPivot = confirmedPivotLow[j]
+
+            if not na(priorPivot)
+
+                bool alreadySweptBeforeCandidate = false
+
+                if j > candidateOffset + 1
+
+                    for k = candidateOffset + 1 to j - 1
+
+                        if low[k] < priorPivot
+
+                            alreadySweptBeforeCandidate := true
+
+                if not alreadySweptBeforeCandidate
+
+                    unsweptCount += 1
+
+                    bool sweptByCandidate = low[candidateOffset] < priorPivot and close[candidateOffset] > priorPivot
+
+                    if sweptByCandidate
+
+                        candidateSweptLiquidity := true
+
+    unsweptCount >= minimumPivots and not candidateSweptLiquidity
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 07. CLASSIC OB
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+int currentBullSwingOffset = na(activeSwingLowBar) ? 0 : bar_index - activeSwingLowBar
+
+int currentBearSwingOffset = na(activeSwingHighBar) ? 0 : bar_index - activeSwingHighBar
+
+if barstate.isconfirmed and classicEngineEnabled and useOB and useClassicOB and bullishDisplacement and bullBodyAllowed and htfBullAllowed
+
+    [bullOffset, bullGrade] = f_select_bull_origin(obLookback, currentBullSwingOffset, not na(activeSwingLowBar))
+
+    if bullOffset > 0
+
+        f_add_ob(bullishBoxes, bullOffset, bullClassicColor, "CLASSIC", bullGrade, true)
+
+if barstate.isconfirmed and classicEngineEnabled and useOB and useClassicOB and bearishDisplacement and bearBodyAllowed and htfBearAllowed
+
+    [bearOffset, bearGrade] = f_select_bear_origin(obLookback, currentBearSwingOffset, not na(activeSwingHighBar))
+
+    if bearOffset > 0
+
+        f_add_ob(bearishBoxes, bearOffset, bearClassicColor, "CLASSIC", bearGrade, false)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 08. BOS OB
+
+// Only BOS events create BOS OB. CHOCH is excluded.
+
+// Impulse search is restricted to the leg.
+
+// Swing origin itself is allowed at legLength + 1.
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bool bullishBOSLiquidityBlocked = false
+
+bool bearishBOSLiquidityBlocked = false
+
+if barstate.isconfirmed and classicEngineEnabled and useOB and useBOSOB and bullishBOS and htfBullAllowed and bullBodyAllowed
+
+    int legLength = na(preBreakSwingLowBar) ? obLookback : math.min(obLookback, bar_index - preBreakSwingLowBar - 1)
+
+    int bosSwingOffset = na(preBreakSwingLowBar) ? 0 : bar_index - preBreakSwingLowBar
+
+    bool bosSwingAllowed = not na(preBreakSwingLowBar)
+
+    if legLength > 0
+
+        [bullBOSOffset, bullBOSGrade] = f_select_bull_origin(legLength, bosSwingOffset, bosSwingAllowed)
+
+        if bullBOSOffset > 0 and bar_index - bullBOSOffset >= nz(preBreakSwingLowBar, bar_index)
+
+            bool blockedByCascade = useLiquidityCascadeFilter and f_bull_liquidity_blocked(bullBOSOffset, cascadeThreshold)
+
+            if blockedByCascade
+
+                bullishBOSLiquidityBlocked := true
+
+                f_add_liquidity_pool(bullBOSOffset, true)
+
+            else
+
+                f_add_ob(bullishBoxes, bullBOSOffset, bullBOSColor, "BOS OB", bullBOSGrade, true)
+
+if barstate.isconfirmed and classicEngineEnabled and useOB and useBOSOB and bearishBOS and htfBearAllowed and bearBodyAllowed
+
+    int legLength = na(preBreakSwingHighBar) ? obLookback : math.min(obLookback, bar_index - preBreakSwingHighBar - 1)
+
+    int bosSwingOffset = na(preBreakSwingHighBar) ? 0 : bar_index - preBreakSwingHighBar
+
+    bool bosSwingAllowed = not na(preBreakSwingHighBar)
+
+    if legLength > 0
+
+        [bearBOSOffset, bearBOSGrade] = f_select_bear_origin(legLength, bosSwingOffset, bosSwingAllowed)
+
+        if bearBOSOffset > 0 and bar_index - bearBOSOffset >= nz(preBreakSwingHighBar, bar_index)
+
+            bool blockedByCascade = useLiquidityCascadeFilter and f_bear_liquidity_blocked(bearBOSOffset, cascadeThreshold)
+
+            if blockedByCascade
+
+                bearishBOSLiquidityBlocked := true
+
+                f_add_liquidity_pool(bearBOSOffset, false)
+
+            else
+
+                f_add_ob(bearishBoxes, bearBOSOffset, bearBOSColor, "BOS OB", bearBOSGrade, false)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 09. CHOCH OB — SEPARATE REVERSAL BLOCKS
+// CHOCH OBs use their own minimum-grade gate and remain distinct from BOS OBs.
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bool bullishCHOCHOBCreated = false
+bool bearishCHOCHOBCreated = false
+
+if barstate.isconfirmed and classicEngineEnabled and useOB and useCHOCHOB and bullishCHOCH and htfBullAllowed and bullBodyAllowed
+    int chochLegLength = na(preBreakSwingLowBar) ? obLookback : math.min(obLookback, bar_index - preBreakSwingLowBar - 1)
+    int chochSwingOffset = na(preBreakSwingLowBar) ? 0 : bar_index - preBreakSwingLowBar
+    bool chochSwingAllowed = not na(preBreakSwingLowBar)
+
+    if chochLegLength > 0
+        [chochBullOffset, chochBullGrade] = f_select_bull_origin(chochLegLength, chochSwingOffset, chochSwingAllowed)
+        if chochBullOffset > 0 and chochBullGrade >= chochMinGrade and bar_index - chochBullOffset >= nz(preBreakSwingLowBar, bar_index)
+            if not f_is_duplicate(bullishBoxes, high[chochBullOffset], low[chochBullOffset])
+                f_add_ob(bullishBoxes, chochBullOffset, bullCHOCHColor, "CHOCH OB", chochBullGrade, true)
+                bullishCHOCHOBCreated := true
+
+if barstate.isconfirmed and classicEngineEnabled and useOB and useCHOCHOB and bearishCHOCH and htfBearAllowed and bearBodyAllowed
+    int chochLegLength = na(preBreakSwingHighBar) ? obLookback : math.min(obLookback, bar_index - preBreakSwingHighBar - 1)
+    int chochSwingOffset = na(preBreakSwingHighBar) ? 0 : bar_index - preBreakSwingHighBar
+    bool chochSwingAllowed = not na(preBreakSwingHighBar)
+
+    if chochLegLength > 0
+        [chochBearOffset, chochBearGrade] = f_select_bear_origin(chochLegLength, chochSwingOffset, chochSwingAllowed)
+        if chochBearOffset > 0 and chochBearGrade >= chochMinGrade and bar_index - chochBearOffset >= nz(preBreakSwingHighBar, bar_index)
+            if not f_is_duplicate(bearishBoxes, high[chochBearOffset], low[chochBearOffset])
+                f_add_ob(bearishBoxes, chochBearOffset, bearCHOCHColor, "CHOCH OB", chochBearGrade, false)
+                bearishCHOCHOBCreated := true
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 10. LIQUIDITY SWEEPS
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var int sweptHighSwingBar = na
+
+var int sweptLowSwingBar = na
+
+var bool pendingBullSweep = false
+
+var bool pendingBearSweep = false
+
+var int bullSweepBar = na
+
+var int bearSweepBar = na
+
+bool bearishSweep = barstate.isconfirmed and not na(activeSwingHigh) and not swingHighBroken and high > activeSwingHigh and close < activeSwingHigh and (na(sweptHighSwingBar) or sweptHighSwingBar != activeSwingHighBar)
+
+bool bullishSweep = barstate.isconfirmed and not na(activeSwingLow) and not swingLowBroken and low < activeSwingLow and close > activeSwingLow and (na(sweptLowSwingBar) or sweptLowSwingBar != activeSwingLowBar)
+
+if bearishSweep
+
+    sweptHighSwingBar := activeSwingHighBar
+
+    pendingBearSweep := true
+
+    bearSweepBar := bar_index
+
+if bullishSweep
+
+    sweptLowSwingBar := activeSwingLowBar
+
+    pendingBullSweep := true
+
+    bullSweepBar := bar_index
+
+if showSweeps and bearishSweep
+
+    label.new(bar_index, high, compactTF ? "SW" : "SWEEP", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.tiny)
+
+if showSweeps and bullishSweep
+
+    label.new(bar_index, low, compactTF ? "SW" : "SWEEP", style=label.style_label_up, color=color.new(color.green, 0), textcolor=color.white, size=size.tiny)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 11. SWEEP OB
+
+// Candidate must be strictly AFTER the sweep candle.
+
+// The swing-origin candidate is also required to be after the sweep.
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+if barstate.isconfirmed and classicEngineEnabled and useOB and useSweepOB and pendingBullSweep and bar_index > bullSweepBar and bullishDisplacement and htfBullAllowed and bullBodyAllowed
+
+    int sweepLegLength = math.min(obLookback, bar_index - bullSweepBar - 1)
+
+    int sweepSwingOffset = na(activeSwingLowBar) ? 0 : bar_index - activeSwingLowBar
+
+    bool sweepSwingAllowed = not na(activeSwingLowBar) and activeSwingLowBar > bullSweepBar
+
+    if sweepLegLength > 0
+
+        [sweepBullOffset, sweepBullGrade] = f_select_bull_origin(sweepLegLength, sweepSwingOffset, sweepSwingAllowed)
+
+        if sweepBullOffset > 0 and bar_index - sweepBullOffset > bullSweepBar
+
+            f_add_ob(bullishBoxes, sweepBullOffset, bullSweepColor, "SWEEP OB", sweepBullGrade, true)
+
+            pendingBullSweep := false
+
+if barstate.isconfirmed and classicEngineEnabled and useOB and useSweepOB and pendingBearSweep and bar_index > bearSweepBar and bearishDisplacement and htfBearAllowed and bearBodyAllowed
+
+    int sweepLegLength = math.min(obLookback, bar_index - bearSweepBar - 1)
+
+    int sweepSwingOffset = na(activeSwingHighBar) ? 0 : bar_index - activeSwingHighBar
+
+    bool sweepSwingAllowed = not na(activeSwingHighBar) and activeSwingHighBar > bearSweepBar
+
+    if sweepLegLength > 0
+
+        [sweepBearOffset, sweepBearGrade] = f_select_bear_origin(sweepLegLength, sweepSwingOffset, sweepSwingAllowed)
+
+        if sweepBearOffset > 0 and bar_index - sweepBearOffset > bearSweepBar
+
+            f_add_ob(bearishBoxes, sweepBearOffset, bearSweepColor, "SWEEP OB", sweepBearGrade, false)
+
+            pendingBearSweep := false
+
+if pendingBullSweep and bar_index - bullSweepBar > obLookback
+
+    pendingBullSweep := false
+
+if pendingBearSweep and bar_index - bearSweepBar > obLookback
+
+    pendingBearSweep := false
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 12. OB AND LIQUIDITY POOL MITIGATION
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+if removeMitigated and barstate.isconfirmed
+
+    if array.size(bullishBoxes) > 0
+
+        for i = array.size(bullishBoxes) - 1 to 0
+
+            box currentBox = array.get(bullishBoxes, i)
+
+            float bottom = box.get_bottom(currentBox)
+
+            int leftBar = box.get_left(currentBox)
+
+            if bar_index > leftBar and low <= bottom
+
+                f_remove_bos_ref(currentBox)
+
+                box.delete(currentBox)
+
+                array.remove(bullishBoxes, i)
+
+    if array.size(bearishBoxes) > 0
+
+        for i = array.size(bearishBoxes) - 1 to 0
+
+            box currentBox = array.get(bearishBoxes, i)
+
+            float top = box.get_top(currentBox)
+
+            int leftBar = box.get_left(currentBox)
+
+            if bar_index > leftBar and high >= top
+
+                f_remove_bos_ref(currentBox)
+
+                box.delete(currentBox)
+
+                array.remove(bearishBoxes, i)
+
+    if array.size(bullishLiquidityBoxes) > 0
+
+        for i = array.size(bullishLiquidityBoxes) - 1 to 0
+
+            box currentBox = array.get(bullishLiquidityBoxes, i)
+
+            float bottom = box.get_bottom(currentBox)
+
+            int leftBar = box.get_left(currentBox)
+
+            if bar_index > leftBar and low <= bottom
+
+                box.delete(currentBox)
+
+                array.remove(bullishLiquidityBoxes, i)
+
+    if array.size(bearishLiquidityBoxes) > 0
+
+        for i = array.size(bearishLiquidityBoxes) - 1 to 0
+
+            box currentBox = array.get(bearishLiquidityBoxes, i)
+
+            float top = box.get_top(currentBox)
+
+            int leftBar = box.get_left(currentBox)
+
+            if bar_index > leftBar and high >= top
+
+                box.delete(currentBox)
+
+                array.remove(bearishLiquidityBoxes, i)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 13. IDM ENGINE — PRESERVED FROM v0.2.2
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+f_idm_engine() =>
+
+    float ph = ta.pivothigh(high, idmPivotLen, idmPivotLen)
+
+    float pl = ta.pivotlow(low, idmPivotLen, idmPivotLen)
+
+    var float sourceHigh = na
+
+    var float sourceLow = na
+
+    var int sourceHighTime = na
+
+    var int sourceLowTime = na
+
+    var bool sourceHighBroken = false
+
+    var bool sourceLowBroken = false
+
+    var int sourceBias = 0
+
+    var bool waitBullPullback = false
+
+    var bool waitBearPullback = false
+
+    var int bullImpulseTime = na
+
+    var int bearImpulseTime = na
+
+    var float bullIDM = na
+
+    var int bullIDMTime = na
+
+    var int bullIDMState = 0
+
+    var float bullInternalHigh = na
+
+    var float bearIDM = na
+
+    var int bearIDMTime = na
+
+    var int bearIDMState = 0
+
+    var float bearInternalLow = na
+
+    bool upBreak = not na(sourceHigh) and not sourceHighBroken and close > sourceHigh and close[1] <= sourceHigh
+
+    bool downBreak = not na(sourceLow) and not sourceLowBroken and close < sourceLow and close[1] >= sourceLow
+
+    if upBreak
+
+        sourceHighBroken := true
+
+        sourceBias := 1
+
+        waitBullPullback := true
+
+        waitBearPullback := false
+
+        bullImpulseTime := time
+
+        bullIDM := na
+
+        bullIDMTime := na
+
+        bullIDMState := 0
+
+        bullInternalHigh := na
+
+    if downBreak
+
+        sourceLowBroken := true
+
+        sourceBias := -1
+
+        waitBearPullback := true
+
+        waitBullPullback := false
+
+        bearImpulseTime := time
+
+        bearIDM := na
+
+        bearIDMTime := na
+
+        bearIDMState := 0
+
+        bearInternalLow := na
+
+    if not na(pl)
+
+        int pivotTime = time[idmPivotLen]
+
+        if waitBullPullback and sourceBias == 1 and pivotTime > bullImpulseTime and bullIDMState == 0
+
+            bullIDM := pl
+
+            bullIDMTime := pivotTime
+
+            bullIDMState := 1
+
+            bullInternalHigh := high
+
+    if not na(ph)
+
+        int pivotTime = time[idmPivotLen]
+
+        if waitBearPullback and sourceBias == -1 and pivotTime > bearImpulseTime and bearIDMState == 0
+
+            bearIDM := ph
+
+            bearIDMTime := pivotTime
+
+            bearIDMState := 1
+
+            bearInternalLow := low
+
+    if bullIDMState == 1 and not na(bullIDM)
+
+        if low < bullIDM and close > bullIDM
+
+            bullIDMState := 2
+
+        else
+
+            bullInternalHigh := math.max(nz(bullInternalHigh, high), high)
+
+    if bullIDMState == 2 and not na(bullInternalHigh) and close > bullInternalHigh
+
+        bullIDMState := 3
+
+    if bearIDMState == 1 and not na(bearIDM)
+
+        if high > bearIDM and close < bearIDM
+
+            bearIDMState := 2
+
+        else
+
+            bearInternalLow := math.min(nz(bearInternalLow, low), low)
+
+    if bearIDMState == 2 and not na(bearInternalLow) and close < bearInternalLow
+
+        bearIDMState := 3
+
+    if not na(ph)
+
+        sourceHigh := ph
+
+        sourceHighTime := time[idmPivotLen]
+
+        sourceHighBroken := false
+
+    if not na(pl)
+
+        sourceLow := pl
+
+        sourceLowTime := time[idmPivotLen]
+
+        sourceLowBroken := false
+
+    [bullIDM[1], bullIDMTime[1], bullIDMState[1], bearIDM[1], bearIDMTime[1], bearIDMState[1]]
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 14. MTF IDM REQUESTS
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[b4Level, b4Time, b4State, s4Level, s4Time, s4State] = request.security(syminfo.tickerid, "240", f_idm_engine(), lookahead=barmerge.lookahead_on)
+
+[b1Level, b1Time, b1State, s1Level, s1Time, s1State] = request.security(syminfo.tickerid, "60", f_idm_engine(), lookahead=barmerge.lookahead_on)
+
+[b15Level, b15Time, b15State, s15Level, s15Time, s15State] = request.security(syminfo.tickerid, "15", f_idm_engine(), lookahead=barmerge.lookahead_on)
+
+[b1mLevel, b1mTime, b1mState, s1mLevel, s1mTime, s1mState] = request.security(syminfo.tickerid, "1", f_idm_engine(), lookahead=barmerge.lookahead_on)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 15. HIGHER-TIMEFRAME ORDER BLOCK ENGINE
+// Each request returns the latest fully confirmed HTF displacement-origin OB.
+// Previous HTF values are used to avoid projecting an unfinished HTF candle.
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+f_mtf_ob_state() =>
+    float localATR = ta.atr(atrLength)
+    float localRange = math.max(high - low, syminfo.mintick)
+    var float insideAnchorHigh = na
+    var float insideAnchorLow = na
+    var bool insideRangeActive = false
+    bool mtfInsideBar = false
+    bool mtfAnchorCandidate = bar_index > 0 and localRange >= nz(localATR[1], localATR) * insideAnchorMinATR
+    if barstate.isconfirmed
+        if insideRangeActive
+            if high <= insideAnchorHigh and low >= insideAnchorLow
+                mtfInsideBar := true
+            else
+                insideRangeActive := false
+                insideAnchorHigh := na
+                insideAnchorLow := na
+        if not insideRangeActive and mtfAnchorCandidate
+            insideRangeActive := true
+            insideAnchorHigh := high
+            insideAnchorLow := low
+    var float lastBullTop = na
+    var float lastBullBottom = na
+    var int lastBullTime = na
+    var float lastBearTop = na
+    var float lastBearBottom = na
+    var int lastBearTime = na
+
+    if barstate.isconfirmed
+        int bullOriginOffset = f_dob_find_origin(false, obLookback, mtfInsideBar)
+        int bearOriginOffset = f_dob_find_origin(true, obLookback, mtfInsideBar)
+        if bullOriginOffset > 0
+            lastBullTop := high[bullOriginOffset]
+            lastBullBottom := low[bullOriginOffset]
+            lastBullTime := time[bullOriginOffset]
+        if bearOriginOffset > 0
+            lastBearTop := high[bearOriginOffset]
+            lastBearBottom := low[bearOriginOffset]
+            lastBearTime := time[bearOriginOffset]
+
+    // Evaluate mitigation on the source timeframe. Its OHLC includes all
+    // lower-timeframe wicks, so an HTF block is removed after price crosses
+    // the far edge of its zone, not merely after touching its near edge.
+    if removeMitigated and not na(lastBullTime) and time > lastBullTime and low <= lastBullBottom
+        lastBullTop := na
+        lastBullBottom := na
+        lastBullTime := na
+
+    if removeMitigated and not na(lastBearTime) and time > lastBearTime and high >= lastBearTop
+        lastBearTop := na
+        lastBearBottom := na
+        lastBearTime := na
+
+    [lastBullTop[1], lastBullBottom[1], lastBullTime[1], lastBearTop[1], lastBearBottom[1], lastBearTime[1]]
+
+[mtf15BullTop, mtf15BullBottom, mtf15BullTime, mtf15BearTop, mtf15BearBottom, mtf15BearTime] = request.security(syminfo.tickerid, "15", f_mtf_ob_state(), lookahead=barmerge.lookahead_on)
+[mtf1HBullTop, mtf1HBullBottom, mtf1HBullTime, mtf1HBearTop, mtf1HBearBottom, mtf1HBearTime] = request.security(syminfo.tickerid, "60", f_mtf_ob_state(), lookahead=barmerge.lookahead_on)
+[mtf4HBullTop, mtf4HBullBottom, mtf4HBullTime, mtf4HBearTop, mtf4HBearBottom, mtf4HBearTime] = request.security(syminfo.tickerid, "240", f_mtf_ob_state(), lookahead=barmerge.lookahead_on)
+[mtf1DBullTop, mtf1DBullBottom, mtf1DBullTime, mtf1DBearTop, mtf1DBearBottom, mtf1DBearTime] = request.security(syminfo.tickerid, "D", f_mtf_ob_state(), lookahead=barmerge.lookahead_on)
+[mtf1WBullTop, mtf1WBullBottom, mtf1WBullTime, mtf1WBearTop, mtf1WBearBottom, mtf1WBearTime] = request.security(syminfo.tickerid, "W", f_mtf_ob_state(), lookahead=barmerge.lookahead_on)
+
+// True when the complete child zone is inside the parent zone.
+f_mtf_zone_contained(float childTop, float childBottom, float parentTop, float parentBottom) =>
+    not na(childTop) and not na(childBottom) and not na(parentTop) and not na(parentBottom) and childTop <= parentTop and childBottom >= parentBottom
+
+// Keep the box object and its source data; only suppress its visual style.
+// This lets a nested lower-TF zone reappear automatically when its parent disappears.
+f_update_mtf_ob(box existingBox, float zoneTop, float zoneBottom, int originTime, string boxText, color zoneColor, bool enabled, bool visible) =>
+    box resultBox = existingBox
+    if not enabled or na(zoneTop) or na(zoneBottom) or na(originTime)
+        if not na(resultBox)
+            box.delete(resultBox)
+        resultBox := na
+    else
+        if na(resultBox)
+            resultBox := box.new(left=originTime, top=zoneTop, right=time, bottom=zoneBottom, xloc=xloc.bar_time, extend=extend.right, bgcolor=zoneColor, border_color=color.new(zoneColor, 5), text=boxText, text_color=color.white, text_size=size.tiny)
+        else
+            box.set_left(resultBox, originTime)
+            box.set_right(resultBox, time)
+            box.set_top(resultBox, zoneTop)
+            box.set_bottom(resultBox, zoneBottom)
+        box.set_bgcolor(resultBox, visible ? zoneColor : color.new(zoneColor, 100))
+        box.set_border_color(resultBox, visible ? color.new(zoneColor, 5) : color.new(zoneColor, 100))
+        box.set_text(resultBox, visible ? boxText : "")
+        box.set_text_color(resultBox, visible ? color.white : color.new(color.white, 100))
+    resultBox
+
+bool chartIs1to5m = not na(chartSeconds) and chartSeconds <= 300
+bool chartIs15m = not na(chartSeconds) and chartSeconds > 300 and chartSeconds <= 900
+bool chartIs30mTo1h = not na(chartSeconds) and chartSeconds > 900 and chartSeconds <= 3600
+bool chartIs4h = not na(chartSeconds) and chartSeconds > 3600 and chartSeconds <= 14400
+bool chartIs1d = not na(chartSeconds) and chartSeconds > 14400 and chartSeconds <= 86400
+
+bool use15MOB = showHigherTF_OB and showMTF15_OB and (chartIs1to5m or chartIs15m)
+bool use1HOB = showHigherTF_OB and showMTF1H_OB and (chartIs1to5m or chartIs15m or chartSeconds == 3600)
+bool use4HOB = showHigherTF_OB and showMTF4H_OB and (chartIs1to5m or chartIs15m or chartIs30mTo1h or chartIs4h)
+bool use1DOB = showHigherTF_OB and showMTF1D_OB and (chartIs15m or chartIs30mTo1h or chartIs4h or chartIs1d)
+bool use1WOB = showHigherTF_OB and showMTF1W_OB and (chartIs4h or chartIs1d or chartSeconds == 604800)
+
+// Hierarchical visibility: a lower-TF zone is hidden only when a higher-TF
+// zone of the same direction fully contains it. Partial overlaps remain visible.
+bool mtf15BullCovered = hideNestedMTFOBs and (
+     (use1HOB and f_mtf_zone_contained(mtf15BullTop, mtf15BullBottom, mtf1HBullTop, mtf1HBullBottom)) or
+     (use4HOB and f_mtf_zone_contained(mtf15BullTop, mtf15BullBottom, mtf4HBullTop, mtf4HBullBottom)) or
+     (use1DOB and f_mtf_zone_contained(mtf15BullTop, mtf15BullBottom, mtf1DBullTop, mtf1DBullBottom)) or
+     (use1WOB and f_mtf_zone_contained(mtf15BullTop, mtf15BullBottom, mtf1WBullTop, mtf1WBullBottom)))
+bool mtf15BearCovered = hideNestedMTFOBs and (
+     (use1HOB and f_mtf_zone_contained(mtf15BearTop, mtf15BearBottom, mtf1HBearTop, mtf1HBearBottom)) or
+     (use4HOB and f_mtf_zone_contained(mtf15BearTop, mtf15BearBottom, mtf4HBearTop, mtf4HBearBottom)) or
+     (use1DOB and f_mtf_zone_contained(mtf15BearTop, mtf15BearBottom, mtf1DBearTop, mtf1DBearBottom)) or
+     (use1WOB and f_mtf_zone_contained(mtf15BearTop, mtf15BearBottom, mtf1WBearTop, mtf1WBearBottom)))
+bool mtf1HBullCovered = hideNestedMTFOBs and (
+     (use4HOB and f_mtf_zone_contained(mtf1HBullTop, mtf1HBullBottom, mtf4HBullTop, mtf4HBullBottom)) or
+     (use1DOB and f_mtf_zone_contained(mtf1HBullTop, mtf1HBullBottom, mtf1DBullTop, mtf1DBullBottom)) or
+     (use1WOB and f_mtf_zone_contained(mtf1HBullTop, mtf1HBullBottom, mtf1WBullTop, mtf1WBullBottom)))
+bool mtf1HBearCovered = hideNestedMTFOBs and (
+     (use4HOB and f_mtf_zone_contained(mtf1HBearTop, mtf1HBearBottom, mtf4HBearTop, mtf4HBearBottom)) or
+     (use1DOB and f_mtf_zone_contained(mtf1HBearTop, mtf1HBearBottom, mtf1DBearTop, mtf1DBearBottom)) or
+     (use1WOB and f_mtf_zone_contained(mtf1HBearTop, mtf1HBearBottom, mtf1WBearTop, mtf1WBearBottom)))
+bool mtf4HBullCovered = hideNestedMTFOBs and (
+     (use1DOB and f_mtf_zone_contained(mtf4HBullTop, mtf4HBullBottom, mtf1DBullTop, mtf1DBullBottom)) or
+     (use1WOB and f_mtf_zone_contained(mtf4HBullTop, mtf4HBullBottom, mtf1WBullTop, mtf1WBullBottom)))
+bool mtf4HBearCovered = hideNestedMTFOBs and (
+     (use1DOB and f_mtf_zone_contained(mtf4HBearTop, mtf4HBearBottom, mtf1DBearTop, mtf1DBearBottom)) or
+     (use1WOB and f_mtf_zone_contained(mtf4HBearTop, mtf4HBearBottom, mtf1WBearTop, mtf1WBearBottom)))
+bool mtf1DBullCovered = hideNestedMTFOBs and use1WOB and f_mtf_zone_contained(mtf1DBullTop, mtf1DBullBottom, mtf1WBullTop, mtf1WBullBottom)
+bool mtf1DBearCovered = hideNestedMTFOBs and use1WOB and f_mtf_zone_contained(mtf1DBearTop, mtf1DBearBottom, mtf1WBearTop, mtf1WBearBottom)
+
+var box mtf15BullBox = na
+var box mtf15BearBox = na
+var box mtf1HBullBox = na
+var box mtf1HBearBox = na
+var box mtf4HBullBox = na
+var box mtf4HBearBox = na
+var box mtf1DBullBox = na
+var box mtf1DBearBox = na
+var box mtf1WBullBox = na
+var box mtf1WBearBox = na
+
+if barstate.islast
+    mtf15BullBox := f_update_mtf_ob(mtf15BullBox, mtf15BullTop, mtf15BullBottom, mtf15BullTime, "15M B-OB", color.new(color.aqua, 86), use15MOB, not mtf15BullCovered)
+    mtf15BearBox := f_update_mtf_ob(mtf15BearBox, mtf15BearTop, mtf15BearBottom, mtf15BearTime, "15M S-OB", color.new(color.fuchsia, 86), use15MOB, not mtf15BearCovered)
+    mtf1HBullBox := f_update_mtf_ob(mtf1HBullBox, mtf1HBullTop, mtf1HBullBottom, mtf1HBullTime, "1H B-OB", color.new(color.blue, 86), use1HOB, not mtf1HBullCovered or chartSeconds == 3600)
+    mtf1HBearBox := f_update_mtf_ob(mtf1HBearBox, mtf1HBearTop, mtf1HBearBottom, mtf1HBearTime, "1H S-OB", color.new(color.orange, 86), use1HOB, not mtf1HBearCovered or chartSeconds == 3600)
+    mtf4HBullBox := f_update_mtf_ob(mtf4HBullBox, mtf4HBullTop, mtf4HBullBottom, mtf4HBullTime, "4H B-OB", color.new(color.teal, 86), use4HOB, not mtf4HBullCovered)
+    mtf4HBearBox := f_update_mtf_ob(mtf4HBearBox, mtf4HBearTop, mtf4HBearBottom, mtf4HBearTime, "4H S-OB", color.new(color.red, 86), use4HOB, not mtf4HBearCovered)
+    mtf1DBullBox := f_update_mtf_ob(mtf1DBullBox, mtf1DBullTop, mtf1DBullBottom, mtf1DBullTime, "1D B-OB", color.new(color.green, 86), use1DOB, not mtf1DBullCovered)
+    mtf1DBearBox := f_update_mtf_ob(mtf1DBearBox, mtf1DBearTop, mtf1DBearBottom, mtf1DBearTime, "1D S-OB", color.new(color.purple, 86), use1DOB, not mtf1DBearCovered)
+    mtf1WBullBox := f_update_mtf_ob(mtf1WBullBox, mtf1WBullTop, mtf1WBullBottom, mtf1WBullTime, "1W B-OB", color.new(color.lime, 86), use1WOB, true)
+    mtf1WBearBox := f_update_mtf_ob(mtf1WBearBox, mtf1WBearTop, mtf1WBearBottom, mtf1WBearTime, "1W S-OB", color.new(color.maroon, 86), use1WOB, true)
+
+
+// Select IDM context for OB classification:
+
+// 1m/5m/15m charts use 15M IDM.
+
+// 30m/1H charts use 1H IDM.
+
+// Charts above 1H use 4H IDM.
+
+float contextBullLevel = na
+
+int contextBullState = 0
+
+float contextBearLevel = na
+
+int contextBearState = 0
+
+string contextTF = "15M"
+
+if na(chartSeconds) or chartSeconds <= 900
+
+    contextBullLevel := b15Level
+
+    contextBullState := nz(b15State, 0)
+
+    contextBearLevel := s15Level
+
+    contextBearState := nz(s15State, 0)
+
+    contextTF := "15M"
+
+else if chartSeconds <= 3600
+
+    contextBullLevel := b1Level
+
+    contextBullState := nz(b1State, 0)
+
+    contextBearLevel := s1Level
+
+    contextBearState := nz(s1State, 0)
+
+    contextTF := "1H"
+
+else
+
+    contextBullLevel := b4Level
+
+    contextBullState := nz(b4State, 0)
+
+    contextBearLevel := s4Level
+
+    contextBearState := nz(s4State, 0)
+
+    contextTF := "4H"
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 16. AUTOMATIC BOS OB CLASSIFICATION
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Bullish BOS OB:
+
+// - Bullish IDM must be below the OB.
+
+// Bearish BOS OB:
+
+// - Bearish IDM must be above the OB.
+
+//
+
+// State 1 = ACTIVE.
+
+// State 2 = SWEPT.
+
+// State 3 = structurally CONFIRMED after sweep.
+
+// States 2 and 3 are classified as EXTREME OB.
+
+f_update_bos_labels(box[] storage, bool isBullish, float idmLevel, int idmState, string idmTF) =>
+
+    if array.size(storage) > 0
+
+        for i = 0 to array.size(storage) - 1
+
+            box currentBox = array.get(storage, i)
+
+            float zoneTop = box.get_top(currentBox)
+
+            float zoneBottom = box.get_bottom(currentBox)
+
+            bool idmIsBeyondZone = isBullish ? (not na(idmLevel) and idmLevel < zoneBottom) : (not na(idmLevel) and idmLevel > zoneTop)
+
+            string classification = displayMode == "FULL" ? "BOS OB" : ""
+
+            if idmIsBeyondZone and idmState == 1
+
+                classification := compactTF ? idmTF + " IDM" : idmTF + " IDM OB"
+
+            else if idmIsBeyondZone and (idmState == 2 or idmState == 3)
+
+                classification := compactTF ? idmTF + " EXT" : idmTF + " EXTREME OB"
+
+            box.set_text(currentBox, classification)
+
+            box.set_text_color(currentBox, color.white)
+
+            box.set_text_size(currentBox, size.tiny)
+
+f_update_bos_labels(bullishBOSBoxes, true, contextBullLevel, contextBullState, contextTF)
+
+f_update_bos_labels(bearishBOSBoxes, false, contextBearLevel, contextBearState, contextTF)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 16A. DOBRUNIA ENGINE — INDEPENDENT STRUCTURE AND MOMENTUM OB
+// Structure OB: BOS/CHOCH after a recent liquidity sweep or a swept/
+// confirmed IDM in the selected higher-timeframe context.
+// Momentum OB: local Order Flow progression, impulse quality and measured
+// correction. No same-timeframe BOS condition is used in this pathway.
+
+bool bullishDobStructureCreated = false
+bool bearishDobStructureCreated = false
+bool bullishDobMomentumCreated = false
+bool bearishDobMomentumCreated = false
+
+bool recentBullSweep = not na(bullSweepBar) and bar_index > bullSweepBar and bar_index - bullSweepBar <= structureSweepWindow
+bool recentBearSweep = not na(bearSweepBar) and bar_index > bearSweepBar and bar_index - bearSweepBar <= structureSweepWindow
+bool bullDobLiquidityReady = recentBullSweep or contextBullState >= 2
+bool bearDobLiquidityReady = recentBearSweep or contextBearState >= 2
+
+var int lastDobBullStructureOrigin = na
+var int lastDobBearStructureOrigin = na
+
+// Structure OB: liquidity sweep followed by strict candle-1/candle-3 separation.
+// This shared detector is also used by the MTF engine for source-TF consistency.
+if barstate.isconfirmed and dobruniaEngineEnabled and useOB and useDobruniaStructureOB
+    int dobBullOffset = f_dob_find_origin(false, obLookback, dobInsideBar)
+    int dobBearOffset = f_dob_find_origin(true, obLookback, dobInsideBar)
+    if dobBullOffset > 0
+        int originBar = bar_index - dobBullOffset
+        if originBar != lastDobBullStructureOrigin
+            f_add_dobrunia_zone(dobBullStructureBoxes, originBar, high[dobBullOffset], low[dobBullOffset], bullDobStructureColor, "DOB STRUCT", 3)
+            lastDobBullStructureOrigin := originBar
+            bullishDobStructureCreated := true
+    if dobBearOffset > 0
+        int originBar = bar_index - dobBearOffset
+        if originBar != lastDobBearStructureOrigin
+            f_add_dobrunia_zone(dobBearStructureBoxes, originBar, high[dobBearOffset], low[dobBearOffset], bearDobStructureColor, "DOB STRUCT", 3)
+            lastDobBearStructureOrigin := originBar
+            bearishDobStructureCreated := true
+
+// Local directional flow is based on successive swing progression, not a BOS.
+float dobLocalPivotHigh = ta.pivothigh(high, momentumPivotLen, momentumPivotLen)
+float dobLocalPivotLow = ta.pivotlow(low, momentumPivotLen, momentumPivotLen)
+var float dobPreviousPivotHigh = na
+var float dobLastPivotHigh = na
+var float dobPreviousPivotLow = na
+var float dobLastPivotLow = na
+
+if not na(dobLocalPivotHigh)
+    dobPreviousPivotHigh := dobLastPivotHigh
+    dobLastPivotHigh := dobLocalPivotHigh
+if not na(dobLocalPivotLow)
+    dobPreviousPivotLow := dobLastPivotLow
+    dobLastPivotLow := dobLocalPivotLow
+
+bool dobBullLocalFlow = not na(dobPreviousPivotHigh) and not na(dobLastPivotHigh) and not na(dobPreviousPivotLow) and not na(dobLastPivotLow) and dobLastPivotHigh > dobPreviousPivotHigh and dobLastPivotLow > dobPreviousPivotLow
+bool dobBearLocalFlow = not na(dobPreviousPivotHigh) and not na(dobLastPivotHigh) and not na(dobPreviousPivotLow) and not na(dobLastPivotLow) and dobLastPivotHigh < dobPreviousPivotHigh and dobLastPivotLow < dobPreviousPivotLow
+
+float dobCandleRange = math.max(high - low, syminfo.mintick)
+float dobBodyRatio = math.abs(close - open) / dobCandleRange
+float dobBullClosePosition = (close - low) / dobCandleRange
+float dobBearClosePosition = (high - close) / dobCandleRange
+
+// ATR is auxiliary: local flow, candle body and close location must agree too.
+bool dobBullImpulse = barstate.isconfirmed and dobBullLocalFlow and close > open and close > close[1] and high >= high[1] and dobBodyRatio >= momentumMinBodyRatio and dobBullClosePosition >= momentumClosePosition and candleBody >= atrValue * momentumMinATR
+bool dobBearImpulse = barstate.isconfirmed and dobBearLocalFlow and close < open and close < close[1] and low <= low[1] and dobBodyRatio >= momentumMinBodyRatio and dobBearClosePosition >= momentumClosePosition and candleBody >= atrValue * momentumMinATR
+
+var bool dobBullPendingCorrection = false
+var bool dobBearPendingCorrection = false
+var float dobBullImpulseLow = na
+var float dobBullImpulseHigh = na
+var float dobBearImpulseLow = na
+var float dobBearImpulseHigh = na
+var int dobBullCandidateBar = na
+var int dobBearCandidateBar = na
+var float dobBullCandidateTop = na
+var float dobBullCandidateBottom = na
+var float dobBearCandidateTop = na
+var float dobBearCandidateBottom = na
+
+if dobruniaEngineEnabled and useOB and useDobruniaMomentumOB and dobBullImpulse
+    if not dobBullPendingCorrection
+        int candidateOffset = f_find_dob_bull_candidate(momentumLookback)
+        if candidateOffset > 0
+            dobBullPendingCorrection := true
+            dobBullImpulseLow := math.min(low, low[candidateOffset])
+            dobBullImpulseHigh := high
+            dobBullCandidateBar := bar_index - candidateOffset
+            dobBullCandidateTop := high[candidateOffset]
+            dobBullCandidateBottom := low[candidateOffset]
+    else
+        dobBullImpulseHigh := math.max(nz(dobBullImpulseHigh, high), high)
+
+if dobruniaEngineEnabled and useOB and useDobruniaMomentumOB and dobBearImpulse
+    if not dobBearPendingCorrection
+        int candidateOffset = f_find_dob_bear_candidate(momentumLookback)
+        if candidateOffset > 0
+            dobBearPendingCorrection := true
+            dobBearImpulseHigh := math.max(high, high[candidateOffset])
+            dobBearImpulseLow := low
+            dobBearCandidateBar := bar_index - candidateOffset
+            dobBearCandidateTop := high[candidateOffset]
+            dobBearCandidateBottom := low[candidateOffset]
+    else
+        dobBearImpulseLow := math.min(nz(dobBearImpulseLow, low), low)
+
+if barstate.isconfirmed and dobBullPendingCorrection
+    float bullImpulseRange = math.max(dobBullImpulseHigh - dobBullImpulseLow, syminfo.mintick)
+    float bullRetracement = (dobBullImpulseHigh - low) / bullImpulseRange
+    if low <= dobBullImpulseLow
+        dobBullPendingCorrection := false
+    else if bullRetracement >= momentumPullbackMin and bullRetracement <= momentumPullbackMax
+        f_add_dobrunia_zone(dobBullMomentumBoxes, dobBullCandidateBar, dobBullCandidateTop, dobBullCandidateBottom, bullDobMomentumColor, "DOB MOM", 2)
+        bullishDobMomentumCreated := true
+        dobBullPendingCorrection := false
+    else if bullRetracement > momentumPullbackMax
+        dobBullPendingCorrection := false
+
+if barstate.isconfirmed and dobBearPendingCorrection
+    float bearImpulseRange = math.max(dobBearImpulseHigh - dobBearImpulseLow, syminfo.mintick)
+    float bearRetracement = (high - dobBearImpulseLow) / bearImpulseRange
+    if high >= dobBearImpulseHigh
+        dobBearPendingCorrection := false
+    else if bearRetracement >= momentumPullbackMin and bearRetracement <= momentumPullbackMax
+        f_add_dobrunia_zone(dobBearMomentumBoxes, dobBearCandidateBar, dobBearCandidateTop, dobBearCandidateBottom, bearDobMomentumColor, "DOB MOM", 2)
+        bearishDobMomentumCreated := true
+        dobBearPendingCorrection := false
+    else if bearRetracement > momentumPullbackMax
+        dobBearPendingCorrection := false
+
+// Separate mitigation for DOBRUNIA zones; Classic storage remains untouched.
+f_clean_dobrunia_boxes(box[] storage, bool isBullish) =>
+    if removeMitigated and barstate.isconfirmed and array.size(storage) > 0
+        for i = array.size(storage) - 1 to 0
+            box currentZone = array.get(storage, i)
+            float invalidationPrice = isBullish ? box.get_bottom(currentZone) : box.get_top(currentZone)
+            bool mitigated = isBullish ? low <= invalidationPrice : high >= invalidationPrice
+            if bar_index > box.get_left(currentZone) and mitigated
+                box.delete(currentZone)
+                array.remove(storage, i)
+
+f_clean_dobrunia_boxes(dobBullStructureBoxes, true)
+f_clean_dobrunia_boxes(dobBearStructureBoxes, false)
+f_clean_dobrunia_boxes(dobBullMomentumBoxes, true)
+f_clean_dobrunia_boxes(dobBearMomentumBoxes, false)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 17. IDM DRAWING
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+f_draw_idm(float level, int sourceTime, int state, color baseColor, string tfName, string direction) =>
+
+    var line idmLine = na
+
+    var label idmLabel = na
+
+    var int lastSourceTime = na
+
+    if not na(level) and not na(sourceTime)
+
+        if na(lastSourceTime) or sourceTime != lastSourceTime
+
+            if not na(idmLine)
+
+                line.delete(idmLine)
+
+            if not na(idmLabel)
+
+                label.delete(idmLabel)
+
+            idmLine := line.new(
+
+                 x1=sourceTime, y1=level,
+
+                 x2=time, y2=level,
+
+                 xloc=xloc.bar_time,
+
+                 extend=extend.right,
+
+                 color=baseColor,
+
+                 width=1)
+
+            idmLabel := label.new(
+
+                 x=time, y=level,
+
+                 xloc=xloc.bar_time,
+
+                 text=tfName + " " + direction + " IDM",
+
+                 style=direction == "BULL" ? label.style_label_up : label.style_label_down,
+
+                 color=baseColor,
+
+                 textcolor=color.black,
+
+                 size=size.tiny)
+
+            lastSourceTime := sourceTime
+
+        color stateColor = state == 2 ? color.gray : state == 3 ? color.lime : baseColor
+
+        string stateText = state == 2 ? "SWEPT" : state == 3 ? "CONFIRMED" : "ACTIVE"
+
+        line.set_color(idmLine, stateColor)
+
+        line.set_style(idmLine, state == 2 ? line.style_dashed : line.style_solid)
+
+        line.set_width(idmLine, state == 3 ? 2 : 1)
+
+        label.set_x(idmLabel, time)
+
+        label.set_y(idmLabel, level)
+
+        string shortDirection = direction == "BULL" ? "B" : "S"
+        string shortState = state == 2 ? "SW" : state == 3 ? "OK" : "A"
+        label.set_text(idmLabel, compactTF ? tfName + " " + shortDirection + " IDM " + shortState : chartSeconds <= 3600 ? tfName + " " + shortDirection + " IDM " + shortState : tfName + " " + direction + " IDM — " + stateText)
+
+        label.set_color(idmLabel, stateColor)
+
+if useIDM and show4H
+
+    f_draw_idm(b4Level, b4Time, b4State, c4H, "4H", "BULL")
+
+    f_draw_idm(s4Level, s4Time, s4State, c4H, "4H", "BEAR")
+
+if useIDM and show1H
+
+    f_draw_idm(b1Level, b1Time, b1State, c1H, "1H", "BULL")
+
+    f_draw_idm(s1Level, s1Time, s1State, c1H, "1H", "BEAR")
+
+if useIDM and show15M
+
+    f_draw_idm(b15Level, b15Time, b15State, c15, "15M", "BULL")
+
+    f_draw_idm(s15Level, s15Time, s15State, c15, "15M", "BEAR")
+
+if useIDM and show1M
+
+    f_draw_idm(b1mLevel, b1mTime, b1mState, c1M, "1M", "BULL")
+
+    f_draw_idm(s1mLevel, s1mTime, s1mState, c1M, "1M", "BEAR")
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 18. ALERTS
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bool anyBullIDMSwept = (b4State == 2) or (b1State == 2) or (b15State == 2) or (b1mState == 2)
+
+bool anyBearIDMSwept = (s4State == 2) or (s1State == 2) or (s15State == 2) or (s1mState == 2)
+
+bool anyBullIDMConfirmed = (b4State == 3) or (b1State == 3) or (b15State == 3) or (b1mState == 3)
+
+bool anyBearIDMConfirmed = (s4State == 3) or (s1State == 3) or (s15State == 3) or (s1mState == 3)
+
+alertcondition(bullishBOS, "Bullish BOS", "SMC Analyzer: Bullish BOS")
+
+alertcondition(bearishBOS, "Bearish BOS", "SMC Analyzer: Bearish BOS")
+
+alertcondition(bullishCHOCH, "Bullish CHOCH", "SMC Analyzer: Bullish CHOCH")
+
+alertcondition(bearishCHOCH, "Bearish CHOCH", "SMC Analyzer: Bearish CHOCH")
+alertcondition(bullishDobStructureCreated, "DOBRUNIA Bullish Structure OB", "SMC Analyzer: DOBRUNIA bullish Structure OB created")
+alertcondition(bearishDobStructureCreated, "DOBRUNIA Bearish Structure OB", "SMC Analyzer: DOBRUNIA bearish Structure OB created")
+alertcondition(bullishDobMomentumCreated, "DOBRUNIA Bullish Momentum OB", "SMC Analyzer: DOBRUNIA bullish Momentum OB created")
+alertcondition(bearishDobMomentumCreated, "DOBRUNIA Bearish Momentum OB", "SMC Analyzer: DOBRUNIA bearish Momentum OB created")
+alertcondition(bullishCHOCHOBCreated, "Bullish CHOCH OB", "SMC Analyzer: Bullish CHOCH OB created")
+alertcondition(bearishCHOCHOBCreated, "Bearish CHOCH OB", "SMC Analyzer: Bearish CHOCH OB created")
+
+alertcondition(bullishSweep, "Bullish Liquidity Sweep", "SMC Analyzer: Bullish liquidity sweep")
+
+alertcondition(bearishSweep, "Bearish Liquidity Sweep", "SMC Analyzer: Bearish liquidity sweep")
+
+alertcondition(anyBullIDMSwept, "Bullish IDM Swept", "SMC Analyzer: Bullish IDM swept")
+
+alertcondition(anyBearIDMSwept, "Bearish IDM Swept", "SMC Analyzer: Bearish IDM swept")
+
+alertcondition(anyBullIDMConfirmed, "Bullish IDM Confirmed", "SMC Analyzer: Bullish IDM structurally confirmed")
+
+alertcondition(anyBearIDMConfirmed, "Bearish IDM Confirmed", "SMC Analyzer: Bearish IDM structurally confirmed")
+
+alertcondition(bullishBOSLiquidityBlocked, "Bullish BOS Liquidity Pool", "SMC Analyzer: Bullish BOS candidate classified as Liquidity Pool / IDM")
+
+alertcondition(bearishBOSLiquidityBlocked, "Bearish BOS Liquidity Pool", "SMC Analyzer: Bearish BOS candidate classified as Liquidity Pool / IDM")
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 19. DASHBOARD
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+f_state_text(int state) =>
+
+    state == 1 ? "ACTIVE" : state == 2 ? "SWEPT" : state == 3 ? "CONFIRMED" : "WAITING"
+
+var table dashboard = table.new(position.top_right, 2, 15, border_width=1)
+
+if barstate.islast and showDashboard
+
+    table.cell(dashboard, 0, 0, "SMC ANALYZER", bgcolor=color.new(color.black, 0), text_color=color.white)
+
+    table.cell(dashboard, 1, 0, "v0.2.18", bgcolor=color.new(color.black, 0), text_color=color.white)
+
+    table.cell(dashboard, 0, 1, "Structure", text_color=color.white)
+
+    table.cell(dashboard, 1, 1, marketBias == 1 ? "BULLISH" : marketBias == -1 ? "BEARISH" : "NEUTRAL", text_color=color.white, bgcolor=marketBias == 1 ? color.new(color.green, 55) : marketBias == -1 ? color.new(color.red, 55) : color.new(color.gray, 70))
+
+    table.cell(dashboard, 0, 2, "OB Origin", text_color=color.white)
+
+    table.cell(dashboard, 1, 2, obOriginMode, text_color=color.white)
+
+    table.cell(dashboard, 0, 3, "OB Quality", text_color=color.white)
+
+    table.cell(dashboard, 1, 3, obSelectionMode, text_color=color.white)
+
+    table.cell(dashboard, 0, 4, "Liquidity filter", text_color=color.white)
+
+    table.cell(dashboard, 1, 4, useLiquidityCascadeFilter ? "ON / " + str.tostring(cascadeThreshold) + " pivots" : "OFF", text_color=color.white)
+
+    table.cell(dashboard, 0, 5, "OB IDM context", text_color=color.white)
+
+    table.cell(dashboard, 1, 5, contextTF, text_color=color.white)
+
+    table.cell(dashboard, 0, 6, "4H Bull / Bear", text_color=color.white)
+
+    table.cell(dashboard, 1, 6, f_state_text(b4State) + " / " + f_state_text(s4State), text_color=color.white)
+
+    table.cell(dashboard, 0, 7, "1H Bull / Bear", text_color=color.white)
+
+    table.cell(dashboard, 1, 7, f_state_text(b1State) + " / " + f_state_text(s1State), text_color=color.white)
+
+    table.cell(dashboard, 0, 8, "15M Bull / Bear", text_color=color.white)
+
+    table.cell(dashboard, 1, 8, f_state_text(b15State) + " / " + f_state_text(s15State), text_color=color.white)
+
+    table.cell(dashboard, 0, 9, "1M Bull / Bear", text_color=color.white)
+
+    table.cell(dashboard, 1, 9, f_state_text(b1mState) + " / " + f_state_text(s1mState), text_color=color.white)
+
+    table.cell(dashboard, 0, 10, "Bull / Bear OB", text_color=color.white)
+
+    table.cell(dashboard, 1, 10, str.tostring(array.size(bullishBoxes)) + " / " + str.tostring(array.size(bearishBoxes)), text_color=color.white)
+
+    table.cell(dashboard, 0, 11, "CHOCH OB", text_color=color.white)
+
+    table.cell(dashboard, 1, 11, useCHOCHOB ? "ON / min " + (chochMinGrade == 3 ? "A" : chochMinGrade == 2 ? "B" : "C") : "OFF", text_color=color.white)
+
+    table.cell(dashboard, 0, 12, "Chart TF / HTF OB", text_color=color.white)
+
+    table.cell(dashboard, 1, 12, timeframe.period + " / " + (showHigherTF_OB ? "ON" : "OFF"), text_color=color.white)
+    table.cell(dashboard, 0, 13, "Engine", text_color=color.white)
+    table.cell(dashboard, 1, 13, engineMode, text_color=color.white)
+    table.cell(dashboard, 0, 14, "DOB Struct / Mom", text_color=color.white)
+    table.cell(dashboard, 1, 14, str.tostring(array.size(dobBullStructureBoxes) + array.size(dobBearStructureBoxes)) + " / " + str.tostring(array.size(dobBullMomentumBoxes) + array.size(dobBearMomentumBoxes)), text_color=color.white)
+
+if barstate.islast and not showDashboard
+
+    table.clear(dashboard, 0, 0, 1, 14)
+
+
+
+
+
+
+
