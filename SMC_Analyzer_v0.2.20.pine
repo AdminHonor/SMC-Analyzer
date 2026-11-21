@@ -576,7 +576,7 @@ f_dob_find_origin(bool bearishMove, int searchLimit, bool insideSeries) =>
     int foundOffset = 0
     int allowedLimit = math.min(searchLimit, obLookback)
     int maxOffset = math.min(allowedLimit - 1, bar_index - dobTrendContextBars - 1)
-    int contextBoundary = bar_index - 1
+    int contextBoundary = bar_index
     if maxOffset >= 2
         for i = 2 to maxOffset
             if foundOffset == 0 and not insideSeries[i]
