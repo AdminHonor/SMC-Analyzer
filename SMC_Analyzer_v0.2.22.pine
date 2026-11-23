@@ -54,29 +54,15 @@ showSwingLabels = input.bool(false, "Show swing labels", group=G_STRUCTURE)
 
 useOB = input.bool(true, "Show Order Blocks", group=G_OB)
 
-
-
-
 obLookback = input.int(20, "OB search lookback", minval=2, maxval=100, group=G_OB)
 
 maxZones = input.int(3, "Maximum zones per direction", minval=1, maxval=20, group=G_OB)
 
 atrLength = input.int(14, "ATR length", minval=1, group=G_OB)
 
-
 removeMitigated = input.bool(true, "Remove fully mitigated OBs", group=G_OB)
 
 duplicateOverlap = input.float(0.75, "Duplicate overlap threshold", minval=0.1, maxval=1.0, step=0.05, group=G_OB)
-
-
-
-
-
-
-
-
-
-
 
 showSweeps = input.bool(true, "Show sweep markers", group=G_SWEEP)
 
@@ -100,19 +86,10 @@ showMTF1D_OB = input.bool(true, "1D OBs", group=G_MTF_OB)
 showMTF1W_OB = input.bool(true, "1W OBs", group=G_MTF_OB)
 hideNestedMTFOBs = input.bool(true, "Hide nested lower-TF OBs", group=G_MTF_OB)
 
-
-
-
-
-
-
-
 color bullDobStructureColor = input.color(color.new(color.aqua, 76), "DOBRUNIA bullish Structure OB", group=G_DOBRUNIA)
 color bearDobStructureColor = input.color(color.new(color.purple, 76), "DOBRUNIA bearish Structure OB", group=G_DOBRUNIA)
 color bullDobMomentumColor = input.color(color.new(color.lime, 72), "DOBRUNIA bullish Momentum OB", group=G_DOBRUNIA)
 color bearDobMomentumColor = input.color(color.new(color.orange, 72), "DOBRUNIA bearish Momentum OB", group=G_DOBRUNIA)
-
-
 
 color c4H = color.rgb(230, 180, 50)
 
@@ -131,9 +108,6 @@ color c1M = color.rgb(220, 220, 220)
 float atrValue = ta.atr(atrLength)
 float candleRange = high - low
 float candleBody = math.abs(close - open)
-
-
-
 
 // DOBRUNIA inside-bar groups: one fixed wick-to-wick anchor. The anchor
 // may be a doji; only its total range is filtered. A one-tick break ends
@@ -193,21 +167,9 @@ if barstate.isconfirmed and showDobInsideRange
         if not na(dobInsideLowLine)
             line.set_x2(dobInsideLowLine, bar_index)
 
-
-
-
 bool compactTF = adaptiveLabels and timeframe.in_seconds() <= 300
 
 int chartSeconds = timeframe.in_seconds()
-
-
-
-
-
-
-
-
-
 
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -308,12 +270,6 @@ if useStructure and bearishCHOCH
 // 04. OB STORAGE AND DRAWING
 
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-
-
-
-
-
 
 // Separate DOBRUNIA storage: no shared duplicate or mitigation side effects.
 var box[] dobBullStructureBoxes = array.new_box()
@@ -419,8 +375,6 @@ var int sweptHighSwingBar = na
 
 var int sweptLowSwingBar = na
 
-
-
 var int bullSweepBar = na
 
 var int bearSweepBar = na
@@ -433,13 +387,11 @@ if bearishSweep
 
     sweptHighSwingBar := activeSwingHighBar
 
-
     bearSweepBar := bar_index
 
 if bullishSweep
 
     sweptLowSwingBar := activeSwingLowBar
-
 
     bullSweepBar := bar_index
 
@@ -789,7 +741,6 @@ if barstate.islast
     mtf1WBullBox := f_update_mtf_ob(mtf1WBullBox, mtf1WBullTop, mtf1WBullBottom, mtf1WBullTime, "1W B-OB", color.new(color.lime, 86), use1WOB, true)
     mtf1WBearBox := f_update_mtf_ob(mtf1WBearBox, mtf1WBearTop, mtf1WBearBottom, mtf1WBearTime, "1W S-OB", color.new(color.maroon, 86), use1WOB, true)
 
-
 // Select IDM context for OB classification:
 
 // 1m/5m/15m charts use 15M IDM.
@@ -1129,8 +1080,6 @@ alertcondition(anyBullIDMConfirmed, "Bullish IDM Confirmed", "SMC Analyzer: Bull
 
 alertcondition(anyBearIDMConfirmed, "Bearish IDM Confirmed", "SMC Analyzer: Bearish IDM structurally confirmed")
 
-
-
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // 19. DASHBOARD
@@ -1162,14 +1111,6 @@ if barstate.islast and showDashboard
     table.cell(dashboard, 0, 5, "OB system", text_color=color.white)
     table.cell(dashboard, 1, 5, "DOBRUNIA", text_color=color.white)
 
-
-
-
-
-
-
-
-
     table.cell(dashboard, 0, 6, "4H Bull / Bear", text_color=color.white)
 
     table.cell(dashboard, 1, 6, f_state_text(b4State) + " / " + f_state_text(s4State), text_color=color.white)
@@ -1191,10 +1132,6 @@ if barstate.islast and showDashboard
     table.cell(dashboard, 0, 11, "DOB Momentum", text_color=color.white)
     table.cell(dashboard, 1, 11, str.tostring(array.size(dobBullMomentumBoxes)) + " / " + str.tostring(array.size(dobBearMomentumBoxes)), text_color=color.white)
 
-
-
-
-
     table.cell(dashboard, 0, 12, "Chart TF / HTF OB", text_color=color.white)
 
     table.cell(dashboard, 1, 12, timeframe.period + " / " + (showHigherTF_OB ? "ON" : "OFF"), text_color=color.white)
@@ -1206,10 +1143,3 @@ if barstate.islast and showDashboard
 if barstate.islast and not showDashboard
 
     table.clear(dashboard, 0, 0, 1, 14)
-
-
-
-
-
-
-
