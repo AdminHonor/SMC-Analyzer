@@ -960,6 +960,8 @@ var float ifcBullOriginLow = na
 var float ifcBearOriginHigh = na
 var int lastBullIFCOrigin = na
 var int lastBearIFCOrigin = na
+bool bullishIFCOBCreated = false
+bool bearishIFCOBCreated = false
 
 bool bullIFCIDMSweep = (b4State == 2 and nz(b4State[1], 0) != 2) or (b1State == 2 and nz(b1State[1], 0) != 2) or (b15State == 2 and nz(b15State[1], 0) != 2) or (b1mState == 2 and nz(b1mState[1], 0) != 2)
 bool bearIFCIDMSweep = (s4State == 2 and nz(s4State[1], 0) != 2) or (s1State == 2 and nz(s1State[1], 0) != 2) or (s15State == 2 and nz(s15State[1], 0) != 2) or (s1mState == 2 and nz(s1mState[1], 0) != 2)
@@ -980,7 +982,9 @@ if barstate.isconfirmed and useIFC
             float reactionUpperWick = high - close
             float ifcZoneTop = reactionBody >= reactionUpperWick ? close : high
             if ifcBullOriginBar != lastBullIFCOrigin
+                int zonesBefore = array.size(ifcBullBoxes)
                 f_add_dobrunia_zone(ifcBullBoxes, ifcBullOriginBar, ifcZoneTop, ifcBullOriginLow, bullIFCColor, "IFC", 3)
+                bullishIFCOBCreated := array.size(ifcBullBoxes) > zonesBefore
                 lastBullIFCOrigin := ifcBullOriginBar
         ifcBullPending := false
     else if ifcBullPending and bar_index > ifcBullOriginBar + 1
@@ -992,7 +996,9 @@ if barstate.isconfirmed and useIFC
             float reactionLowerWick = close - low
             float ifcZoneBottom = reactionBody >= reactionLowerWick ? close : low
             if ifcBearOriginBar != lastBearIFCOrigin
+                int zonesBefore = array.size(ifcBearBoxes)
                 f_add_dobrunia_zone(ifcBearBoxes, ifcBearOriginBar, ifcBearOriginHigh, ifcZoneBottom, bearIFCColor, "IFC", 3)
+                bearishIFCOBCreated := array.size(ifcBearBoxes) > zonesBefore
                 lastBearIFCOrigin := ifcBearOriginBar
         ifcBearPending := false
     else if ifcBearPending and bar_index > ifcBearOriginBar + 1
@@ -1138,8 +1144,8 @@ alertcondition(bullishDobStructureCreated, "DOBRUNIA Bullish Structure OB", "SMC
 alertcondition(bearishDobStructureCreated, "DOBRUNIA Bearish Structure OB", "SMC Analyzer: DOBRUNIA bearish Structure OB created")
 alertcondition(bullishDobMomentumCreated, "DOBRUNIA Bullish Momentum OB", "SMC Analyzer: DOBRUNIA bullish Momentum OB created")
 alertcondition(bearishDobMomentumCreated, "DOBRUNIA Bearish Momentum OB", "SMC Analyzer: DOBRUNIA bearish Momentum OB created")
-alertcondition(useIFC and array.size(ifcBullBoxes) > 0 and array.get(ifcBullBoxes, array.size(ifcBullBoxes) - 1) != na, "IFC Bullish OB", "SMC Analyzer: Bullish IFC OB created")
-alertcondition(useIFC and array.size(ifcBearBoxes) > 0 and array.get(ifcBearBoxes, array.size(ifcBearBoxes) - 1) != na, "IFC Bearish OB", "SMC Analyzer: Bearish IFC OB created")
+alertcondition(bullishIFCOBCreated, "IFC Bullish OB", "SMC Analyzer: Bullish IFC OB created")
+alertcondition(bearishIFCOBCreated, "IFC Bearish OB", "SMC Analyzer: Bearish IFC OB created")
 
 alertcondition(bullishSweep, "Bullish Liquidity Sweep", "SMC Analyzer: Bullish liquidity sweep")
 
