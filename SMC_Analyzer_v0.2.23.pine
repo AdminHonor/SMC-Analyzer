@@ -963,8 +963,8 @@ var int lastBearIFCOrigin = na
 bool bullishIFCOBCreated = false
 bool bearishIFCOBCreated = false
 
-bool bullIFCIDMSweep = (b4State == 2 and nz(b4State[1], 0) != 2) or (b1State == 2 and nz(b1State[1], 0) != 2) or (b15State == 2 and nz(b15State[1], 0) != 2) or (b1mState == 2 and nz(b1mState[1], 0) != 2)
-bool bearIFCIDMSweep = (s4State == 2 and nz(s4State[1], 0) != 2) or (s1State == 2 and nz(s1State[1], 0) != 2) or (s15State == 2 and nz(s15State[1], 0) != 2) or (s1mState == 2 and nz(s1mState[1], 0) != 2)
+bool bullIFCIDMSweep = (b4State == 1 and not na(b4Level) and low < b4Level and close > b4Level) or (b1State == 1 and not na(b1Level) and low < b1Level and close > b1Level) or (b15State == 1 and not na(b15Level) and low < b15Level and close > b15Level) or (b1mState == 1 and not na(b1mLevel) and low < b1mLevel and close > b1mLevel)
+bool bearIFCIDMSweep = (s4State == 1 and not na(s4Level) and high > s4Level and close < s4Level) or (s1State == 1 and not na(s1Level) and high > s1Level and close < s1Level) or (s15State == 1 and not na(s15Level) and high > s15Level and close < s15Level) or (s1mState == 1 and not na(s1mLevel) and high > s1mLevel and close < s1mLevel)
 
 float ifcRange = math.max(high - low, syminfo.mintick)
 float ifcBody = math.abs(close - open)
